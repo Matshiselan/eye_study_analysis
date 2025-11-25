@@ -1,0 +1,322 @@
+---
+title: "eye_study_analysis_report"
+author: "UI Labs"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+## Background
+
+This report details how the fixation analysis was done by:
+
+1.  Following a recommended folder structure
+2.  Applying some functions inline with the Don't Repeat Yourself (DRY) principle
+3.  Combining the subject .csv files into a single csv
+4.  . Analysing fixations per:
+    -   Subject
+
+    -   Subject per screen number
+
+    -   Subject per screen number per number of visits
+
+## Analysis
+
+### Folder structure
+
+In order to use this code, we need to create an eye study project in R, this helps us to easily navigate and use the code among ourselves irrespective of where (downloads/documents/desktop etc) we saved our datasets. By following this step, there won't be a need to do perform **'*setwd()*'**.
+
+Please follow the following directions in creating a project folder:
+
+1.  Click on File (top left corner)
+2.  Click on New project
+3.  Click on New Directory
+4.  Click on New project
+5.  Give a directory name of your choice, put underscore where there are spaces (we used eye_study)
+6.  The subdirectory is a folder that you want to store this project in. For example you can create a folder in your documents called ***'playground'*** most people do this, it will be a folder where you store all future projects in.
+7.  Once done, you will need to past in the data folders you shared with us in the new created project folder
+8.  Create a new folder called subject_data, this is where we will save the ***.csv files*** we will be creating.
+
+We believe by using this folder strategy, the code becomes more reproducible and can be easily shared among users.
+
+### Packages
+
+The following packages were used in the analysis. To install the SACCADES package, uncomment and load the devtools package and run the installation of the saccades from github.
+
+```{r}
+# Load necessary R packages for data analysis 
+
+library(tidyverse) # package for data manipulation and visualization.
+library(janitor) # package for cleaning and tidying data.
+# library("devtools")
+# install_github("tmalsburg/saccades/saccades", 
+#                dependencies=TRUE)
+library(saccades) # package for analyzing eye movement data.
+
+```
+
+### Functions
+
+Inline with the Dont Repeat Yourself (DRY) coding principle, we developed some functions to help with the data wrangling and fixation analysis. We have saved the functions in an R script called functions.
+
+```{r}
+# Load external functions from "functions.R"
+source("functions.R")
+
+```
+
+### Data extraction
+
+The following code, gets all .csv files and combines them into one csv file. [**This will take sometime to run**]{.underline}
+
+```{r}
+# List all folders in the specified directory containing subject data.
+subject_folders <- list.files("data/PhD data shared/Mapped data per subject (per trial)") # List all folders
+
+# Create full paths for each subject folder.
+subject_folders <- str_c("data/PhD data shared/Mapped data per subject (per trial)", '/', subject_folders)# Combine the folder structure name and the subject folders
+
+# Convert list of folders to tibble and read CSV files
+subject_data <- subject_folders %>% 
+  as_tibble() %>% 
+  mutate(data = map(.x = value, .f = ~csv_reader(.x))) %>% 
+  unnest(data) # read the csv files
+
+# Filter rows with missing values in specific columns
+subject_data_1 <- subject_data %>% 
+  filter(is.na(`Subject\tTreatment\tscreen_num\tnum_visit_screen\tx\ty\ttime\ttrial`)) %>% 
+  select(value:trial) %>% 
+  clean_names() 
+
+# Filter out rows with missing values in specific columns
+subject_data_2 <- subject_data %>% 
+  filter(!is.na(`Subject\tTreatment\tscreen_num\tnum_visit_screen\tx\ty\ttime\ttrial`)) %>% 
+  # Select relevant columns
+  select(value, `Subject\tTreatment\tscreen_num\tnum_visit_screen\tx\ty\ttime\ttrial`) %>% 
+  # Separate the combined column into individual columns
+  separate(col = `Subject\tTreatment\tscreen_num\tnum_visit_screen\tx\ty\ttime\ttrial`,
+           into = c("subject", "treatment",	"screen_num",	"num_visit_screen",	
+                    "x",	"y",	"time",	"trial"),
+           sep = '\t') %>% 
+  # Convert columns from character to double
+  mutate(across(.cols = subject:trial, .fns = ~as.double(.x)))
+
+
+# Combine the two data sets vertically
+subject_data_fin <- bind_rows(subject_data_1, subject_data_2)# %>%  # combine the data sets
+  # filter(screen_num != 0, screen_num == "0") # remove screen number 0
+
+
+# Save as csv
+write_csv(subject_data_fin, 'subject_data/subject_data.csv') # save the csv
+
+
+# Load/Read the csv data
+# subject_data_fin <- read_csv("subject_data/subject_data.csv") # Yo can load the data later
+
+```
+
+
+
+### Testing
+
+```{r}
+
+# check missing values - x, y, time & trial
+
+subject_data_stats <- subject_data_fin %>% 
+  filter(!(screen_num %in% c(0, "0"))) %>% 
+  group_by(subject) %>% 
+  summarise(
+    n = n(),
+    n_trials = n_distinct(trial),
+    n_screens = n_distinct(screen_num),
+    n_visits = n_distinct(num_visit_screen),
+    missing_x = sum(is.na(x)),
+    missing_y = sum(is.na(y)),
+    missing_time = sum(is.na(time)),
+    missing_trial = sum(is.na(trial))
+  ) 
+
+subject_data_stats %>% 
+  mutate(missing_tot = missing_x+ missing_y + missing_time + missing_trial) %>% 
+  filter(missing_tot >0)
+  # filter(subject %in% c(54, 72))
+
+subject_data_fin %>% 
+  filter(!screen_num %in% c(0, "0")) %>% 
+  filter(subject %in% c(54, 72))
+
+```
+
+
+
+
+
+### Fixation by subject and screen number
+
+Using the combined .csv file, we analyse fixations per subject per screen number. We then filtered screen number 1-7 for treatment 1-4 and screen number 1-9 for treatment 5-8.
+
+```{r}
+screen_stats <- subject_data_fin %>%
+  # Group data by subject and screen number
+  group_by(subject, screen_num) %>% 
+  nest(data = c(treatment, x, y, time, trial)) %>% 
+  # Calculate screen-level statistics using custom function process_possibly
+  mutate(stats = map(data, ~ process_possibly(.x))) %>% 
+  mutate(stats = map(stats, ~ pivot_wider_and_clean(.x))) %>% 
+  # Unnest the statistics
+  unnest(stats) %>% 
+  # Remove the original nested data
+  select(-data) %>% 
+  # Remove grouping
+  ungroup() %>%
+  # Rename columns related to trials to be related to screens
+  rename_with(~str_replace(., "trial", "screen"), contains("trial")) %>%
+  # Select relevant columns
+  select(subject, screen_num, mean_no_of_fixations_per_screen,
+         mean_duration_of_fixations)
+  
+#View the ouput
+#screen_stats %>% head(100) %>% view()
+
+
+
+screen_stats_output <- screen_stats %>% 
+  # Generate treatment assignments 
+  mutate(treatment = case_when(
+    subject %in% 1:33 ~ 1,
+    subject %in% 34:66 ~ 2,
+    subject %in% 67:96 ~ 3,
+    subject %in% 97:128 ~ 4,
+    subject %in% 129:160 ~ 5,
+    subject %in% 161:193 ~ 6,
+    subject %in% 194:22  ~ 7,
+    subject %in% c(88, 114, 248) ~ 0,
+    TRUE ~ 8 # Handle other cases if needed
+  )) %>% 
+  
+  # Calculate groups based on treatment
+  mutate(groups = case_when(treatment %in% 1:4 ~ "group 1",
+                            T ~ "group 2")) %>%
+  # mutate(groups = case_when(treatment %in% 1:4 ~ "group 1",
+  #                         T ~ "group 2")) %>% 
+  # Calculate selection based on groups and screen number conditions
+  mutate(selection = case_when(groups == "group 1" & screen_num %in% 1:7 ~ 1,
+                               groups == "group 2" & screen_num %in% 1:9 ~ 1, 
+                               T ~ 0)) %>% 
+  # Filter rows based on selection
+  filter(selection == 1) %>%
+  # Remove the temporary selection column
+  select(-selection) %>% 
+  # This column will help differentiate when we combina the fixations stats
+  mutate(data = "subject_screen")
+  
+
+# Save screen_stats as csv file
+write_csv(screen_stats_output,
+          'subject_data/screen_stats_data.csv')
+
+# View the output
+#screen_stats_output %>% head(100) %>% view()
+```
+
+
+
+
+
+
+
+### Fixation by subject per screen number and number of views
+
+We analyse fixations by subject per screen number per number of views.
+
+```{r}
+#' Calculate screen view statistics for each subject, screen, and visit 
+#' combination.
+screen_view_stats <- subject_data_fin %>%
+  # Group by subject, screen_num, and num_visit_screen
+  group_by(subject, screen_num, num_visit_screen) %>%
+  # Nest data for each group
+  nest(data = c(treatment, x, y, time, trial)) %>% 
+  # Calculate statistics for nested data using process_possibly
+  mutate(stats = map(data, ~ process_possibly(.x))) %>% 
+  # Pivot and clean the resulting statistics
+  mutate(stats = map(stats, ~ pivot_wider_and_clean(.x))) %>% 
+  # Unnest the statistics
+  unnest(stats) %>% 
+  # Select relevant columns and remove the nested data column
+  select(-data) %>% 
+  # Ungroup the data
+  ungroup() %>%
+  # Rename columns with trial to screen_visit
+  rename_with(~str_replace(., "trial", "screen_visit"), contains("trial")) %>% 
+  # Select specific columns for the final output
+  select(subject, screen_num, num_visit_screen, mean_no_of_fixations_per_screen_visit,
+         mean_duration_of_fixations) %>% 
+  # This column will help differentiate when we combina the fixations stats
+  mutate(data = "subject_screen_visit")
+
+# View output
+#screen_view_stats %>% head(100) %>% view()
+
+# Save screen_view_stats_output as csv file
+write_csv(screen_view_stats,
+          'subject_data/screen_view_stats_output.csv')
+
+```
+
+### Fixation by subject
+
+We then analyse the fixations per subject and save the csv file
+
+```{r}
+#' Compute statistics for each subject based on the provided data.
+subject_stats <- subject_data_fin %>%
+  # Group data by subject
+  group_by(subject) %>% 
+  nest(data = c(treatment, screen_num, num_visit_screen, x, y, time, trial)) %>% 
+  # Compute statistics for each group
+  mutate(stats = map(data, ~ process_possibly(.x))) %>% 
+  # Pivot and clean the computed statistics
+  mutate(stats = map(stats, ~ pivot_wider_and_clean(.x))) %>% 
+  unnest(stats) %>% 
+  # Select relevant columns and remove unnecessary ones
+  select(-c(data, value)) %>% 
+  ungroup() %>%
+  # Rename columns with subject-specific information
+  rename_with(~str_replace(., "trial", "subject"), 
+              contains("trial")) %>%
+  # Select final set of columns
+  select(subject, 
+         mean_duration_of_subjects,
+         mean_duration_of_fixations,
+         mean_no_of_fixations_per_subject)  %>% 
+  # This column will help differentiate when we combina the fixations stats
+  mutate(data = "subject")
+  
+# View the data
+# subject_stats %>% 
+#   head(100) %>% 
+#   view()
+
+# Save as csv
+write_csv(subject_stats,
+          'subject_data/subject_stats.csv')
+
+```
+
+### Combining the data
+
+We then combine the fixation stats datasets into one single csv as follows
+
+```{r}
+fixation_stats <- bind_rows(subject_stats,
+                            screen_stats_output,
+                            screen_view_stats)
+
+# Save as csv
+write_csv(fixation_stats,
+          'subject_data/fixation_stats.csv')
+```

@@ -1,0 +1,297 @@
+---
+title: "Fixations analysis"
+author: "Ntando and Evander"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+## Purpose
+
+```{r}
+library(tidyverse) # package for data manipulation and visualization.
+
+library(janitor) # package for cleaning and tidying data.
+
+# library("devtools")
+
+# install_github("tmalsburg/saccades/saccades",
+
+# dependencies=TRUE)
+
+library(saccades) # package for analyzing eye movement data.
+```
+
+### Data
+
+```{r}
+subject_data_fin <- read_csv("subject_data/subject_data.csv") %>% 
+  filter(!(screen_num %in% c(0, "0"))) %>%    # remove screen number 0
+  select(-value) # remove folder roots
+```
+
+### Functions
+
+```{r}
+# Load external functions from "functions.R"
+source("functions.R")
+```
+
+### Fixations for subject 72
+
+From our analysis subject 72, screen number 5 and visit 5 shows that no fixations
+
+can be obtained from such instance as there are no saccades that can be obtained
+
+Upon investigating further there are possible reasons for not getting any fixations
+
+1\. Discontinuity in the data
+
+2\. Poor data
+
+Source:
+
+1\. https://stackoverflow.com/questions/54997537/problems-in-the-analysis-of-gaze-data-r-package-saccades#:\~:text=I%20suspect%20that%20there%20are,parse%20into%20saccades%20and%20fixations.&text=If%20ggplot2%20isn't%20installed,packages('ggplot2')%20first.
+
+We expolored the 2 possibilities. There is no discontinuity in the data as shown
+
+by the following graph. This leaves us with the poor data problem.
+
+For subject 72, screen number 2 and visit 3, fixations can be obtained as below
+
+```{r}
+subject_72_5_5 <- subject_data_fin %>% 
+  filter(subject == 72, screen_num ==5, num_visit_screen ==5) %>% 
+  select(time, x, y, trial)
+
+# Fixations for subject 72, screen number 5, visit ==5
+subject_72_5_5_fix <- subject_data_fin %>% 
+  filter(subject == 72, screen_num ==5, num_visit_screen ==5) %>% 
+  # group_by(subject, screen_num, num_visit_screen) %>%
+  group_by(subject, screen_num, num_visit_screen) %>%
+  # Nest data for each group
+  nest(data = c(treatment, x, y, time, trial)) %>% 
+  # Calculate statistics for nested data using process_possibly
+  mutate(stats = map(data, ~ fixations_possibly(.x))) %>% 
+  # Pivot and clean the resulting statistics
+  # Unnest the statistics
+  unnest(stats) %>% 
+  # Select relevant columns and remove the nested data column
+  select(-data) %>% 
+  # Ungroup the data
+  ungroup()
+
+
+# Fixations 
+subject_72_5_5_fix
+
+
+# Plot to see discontinuities in the data
+ggplot(data = subject_72_5_5,
+       aes(x = time)) + # define time series x axis
+geom_line(aes(y = x, colour = 'X')) +  # plot horizontal data
+geom_line(aes(y = y, colour = 'Y')) + # plot vertical time series too
+scale_color_manual(name = "Coordinates", values = c("X" = "darkblue", 
+                                                 "Y" = "darkred")) +
+labs(x = "Time", y = "X and Y lines",
+     title = "X, Y coordinates by Time") +
+  theme_bw()
+
+
+```
+
+There is no discontinuity in the data meaning that the missing data points could be a result of poor data
+
+## Fixations: Subject
+
+```{r}
+
+subject_fixations <- subject_data_fin %>%
+  # group_by(subject, screen_num) %>%
+  group_by(subject) %>%
+  # Nest data for each group
+  nest(data = c(treatment, x, y, time, trial)) %>% 
+  # Calculate statistics for nested data using process_possibly
+  mutate(stats = map(data, ~ fixations_possibly(.x))) %>% 
+  # Pivot and clean the resulting statistics
+  # Unnest the statistics
+  unnest(stats) %>% 
+  # Select relevant columns and remove the nested data column
+  select(-data) %>% 
+  # Ungroup the data
+  ungroup()
+
+# Save the fixations data
+write_csv(subject_fixations,
+          "subject_data/subject_fixations.csv")
+
+# Get the first 6 rows output
+subject_fixations %>% 
+  head()
+
+# Count the events (fixations, blinks etc) 
+subject_fixations_count <- subject_fixations %>% 
+  # group_by(subject, screen_num, num_visit_screen) %>%
+  group_by(subject) %>%
+  count(event) %>% 
+  mutate(percentage = scales::percent(n/sum(n)))
+
+# Take a look at the first 6 rows
+subject_fixations_count %>% 
+  head()
+
+# Save this data
+write_csv(subject_fixations_count,
+          "output/subject_fixations_count.csv")
+
+# Total rows of info
+total_rows <- nrow(subject_fixations %>% 
+  # filter(!is.na(x)) %>% 
+  group_by(subject) %>% 
+  count()
+  )
+
+# Non missing information
+total_non_missing_rows <- nrow(subject_fixations %>% 
+  filter(!is.na(x)) %>%
+  group_by(subject) %>% 
+  count()
+  )
+
+#percentage
+non_missing_perc <- round((total_non_missing_rows/total_rows)*100,2)
+missing_perc <- round(100 - as.numeric(non_missing_perc),2)
+
+# Percentage report
+glue::glue("The total percentage of data that is missing is {missing_perc}%, meaning we have a total of {non_missing_perc}% non missing data points")
+```
+
+## Fixations: Subject and Screen number
+
+```{r}
+subject_screen_fixations <- subject_data_fin %>%
+  # group_by(subject, screen_num) %>%
+  group_by(subject, screen_num) %>%
+  # Nest data for each group
+  nest(data = c(treatment, x, y, time, trial)) %>% 
+  # Calculate statistics for nested data using process_possibly
+  mutate(stats = map(data, ~ fixations_possibly(.x))) %>% 
+  # Pivot and clean the resulting statistics
+  # Unnest the statistics
+  unnest(stats) %>% 
+  # Select relevant columns and remove the nested data column
+  select(-data) %>% 
+  # Ungroup the data
+  ungroup()
+
+# Save the fixations data
+write_csv(subject_screen_fixations,
+          "subject_data/subject_screen_fixations.csv")
+
+# Get the first 6 rows output
+subject_screen_fixations %>% 
+  head()
+
+# Count the events (fixations, blinks etc) 
+subject_screen_fixations_count <- subject_screen_fixations %>% 
+  # group_by(subject, screen_num, num_visit_screen) %>%
+  group_by(subject, screen_num) %>%
+  count(event) %>% 
+  mutate(percentage = scales::percent(n/sum(n)))
+
+# Take a look at the first 6 rows
+subject_screen_fixations_count %>% 
+  head()
+
+# Save this data
+write_csv(subject_screen_fixations_count,
+          "output/subject_screen_fixations_count.csv")
+
+# Total rows of info
+total_rows_2 <- nrow(subject_screen_fixations %>% 
+  # filter(!is.na(x)) %>% 
+  group_by(subject, screen_num) %>% 
+  count()
+  )
+
+# Non missing information
+total_non_missing_rows_2 <- nrow(subject_screen_fixations %>% 
+  filter(!is.na(x)) %>%
+  group_by(subject, screen_num) %>% 
+  count()
+  )
+
+#percentage
+non_missing_perc_2 <- round((total_non_missing_rows_2/total_rows_2)*100,2)
+missing_perc_2 <- round(100 - as.numeric(non_missing_perc_2),2)
+
+# Percentage report
+glue::glue("The total percentage of data that is missing is {missing_perc_2}%, meaning we have a total of {non_missing_perc_2}% non missing data points")
+```
+
+## Fixations: Subject, Screen and Visit
+
+```{r}
+subject_screen_visit_fixations <- subject_data_fin %>%
+  # group_by(subject, screen_num, num_visit_screen) %>%
+  group_by(subject, screen_num, num_visit_screen) %>%
+  # Nest data for each group
+  nest(data = c(treatment, x, y, time, trial)) %>% 
+  # Calculate statistics for nested data using process_possibly
+  mutate(stats = map(data, ~ fixations_possibly(.x))) %>% 
+  # Pivot and clean the resulting statistics
+  # Unnest the statistics
+  unnest(stats) %>% 
+  # Select relevant columns and remove the nested data column
+  select(-data) %>% 
+  # Ungroup the data
+  ungroup()
+
+# Save the fixations data
+write_csv(subject_screen_visit_fixations,
+          "subject_data/subject_screen_visit_fixations.csv")
+
+# Get the first 6 rows output
+subject_screen_visit_fixations %>% 
+  head()
+
+# Count the events (fixations, blinks etc) 
+subject_screen_visit_fixations_count <- subject_screen_visit_fixations %>% 
+  # group_by(subject, screen_num, num_visit_screen) %>%
+  group_by(subject, screen_num, num_visit_screen) %>%
+  count(event) %>% 
+  mutate(percentage = scales::percent(n/sum(n)))
+
+# Take a look at the first 6 rows
+subject_screen_visit_fixations_count %>% 
+  head()
+
+# Save this data
+write_csv(subject_screen_visit_fixations_count,
+          "output/subject_screen_visit_fixations_count.csv")
+
+# Total rows of info
+total_rows_3 <- nrow(subject_screen_visit_fixations %>% 
+  # filter(!is.na(x)) %>% 
+  group_by(subject, screen_num, num_visit_screen) %>% 
+  count()
+  )
+
+# Non missing information
+total_non_missing_rows_3 <- nrow(subject_screen_visit_fixations %>% 
+  filter(!is.na(x)) %>%
+  group_by(subject, screen_num, num_visit_screen) %>% 
+  count()
+  )
+
+#percentage
+non_missing_perc_3 <- round((total_non_missing_rows_3/total_rows_3)*100,2)
+missing_perc_3 <- 100 - as.numeric(non_missing_perc_3)
+
+# Percentage report
+glue::glue("The total percentage of data that is missing is {missing_perc_3}%, meaning we have a total of {non_missing_perc_3}% non missing data points")
+
+
+
+```

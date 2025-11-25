@@ -1,0 +1,348 @@
+---
+title: "Issue analysis"
+author: "Ntandoyenkosi and Evander"
+date: "2024-03-24"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Packages
+
+```{r}
+library(tidyverse) # package for data manipulation and visualization.
+library(janitor) # package for cleaning and tidying data.
+# library("devtools")
+# install_github("tmalsburg/saccades/saccades", 
+#                dependencies=TRUE)
+library(saccades) # package for analyzing eye movement data.
+```
+
+
+
+### Data
+
+```{r}
+subject_data_fin <- read_csv("subject_data/subject_data.csv")
+```
+
+
+```{r}
+# Load external functions from "functions.R"
+source("functions.R")
+
+```
+
+
+## First Issue
+
+The screenshots of Subject 1 are the raw data file, the fixations (after running 
+detect.fixations - please note I changed the smooth saccades to FALSE since I 
+have low data frequency at 60hz, I also changed it to FALSE in your qmd file 
+before running it), the summary stats and the Rscrip that I used for subject 1. 
+
+For all the subject files with the x and y coordinates and time, which we use 
+to detect fixations I removed the calibration screens from each of the subject 
+folders. This means I manually removed screen 0 and the last screen of each 
+participant (by implication this is screen 0 for all and screen 8 (treatment 
+groups 1-4) and screen 10 (treatment groups 5-8).
+
+The screenshots of the csv files with a focus on Subject 1 for reference and 
+comparison.
+
+You will see that even the fixations for subject 1 is not quite the same, and 
+according to me both ran on detect.fixations, with the inputs and requirements 
+(default of lambda is 6 in both).
+
+Answer:
+
+
+
+```{r}
+subject_data_nw <- subject_data_fin %>%  # combine the data sets
+  filter(!(screen_num %in% c(0, "0"))) %>%   # remove screen number 0
+  mutate(treatment = case_when(
+    subject %in% 1:33 ~ 1,
+    subject %in% 34:66 ~ 2,
+    subject %in% 67:96 ~ 3,
+    subject %in% 97:128 ~ 4,
+    subject %in% 129:160 ~ 5,
+    subject %in% 161:193 ~ 6,
+    subject %in% 194:226 ~ 7,
+    subject %in% c(88, 114, 248) ~ 0,
+    TRUE ~ 8 # Handle other cases if needed
+  )) %>% 
+  
+  # Calculate groups based on treatment
+  mutate(groups = case_when(treatment %in% 1:4 ~ "group 1",
+                            T ~ "group 2")) %>%
+  # mutate(groups = case_when(treatment %in% 1:4 ~ "group 1",
+  #                         T ~ "group 2")) %>% 
+  # Calculate selection based on groups and screen number conditions
+  mutate(selection = case_when(groups == "group 1" & 
+                                 screen_num == 8 ~ 1, #screen num 8 & Teatment 1-4
+                               groups == "group 2" & 
+                                 screen_num == 10 ~ 1, #screen num 10 & Teatment 5-8 
+                               T ~ 0)) %>% 
+  # Filter rows based on selection
+  filter(selection != 1) %>% # remove selection
+  # Remove the temporary selection column
+  select(-selection) 
+```
+
+
+
+## Second Isuue
+
+
+### Fixation by subject per screen number and number of views
+
+We analyse fixations by subject per screen number per number of views.
+
+```{r}
+#' Calculate screen view statistics for each subject, screen, and visit 
+#' combination.
+screen_view_stats <- subject_data_fin %>%
+  # Group by subject, screen_num, and num_visit_screen
+  group_by(subject, screen_num, num_visit_screen) %>%
+  # Nest data for each group
+  nest(data = c(treatment, x, y, time, trial)) %>% 
+  # Calculate statistics for nested data using process_possibly
+  mutate(stats = map(data, ~ process_possibly(.x))) %>% 
+  # Pivot and clean the resulting statistics
+  mutate(stats = map(stats, ~ pivot_wider_and_clean(.x))) %>% 
+  # Unnest the statistics
+  unnest(stats) %>% 
+  # Select relevant columns and remove the nested data column
+  select(-data) %>% 
+  # Ungroup the data
+  ungroup() %>%
+  # Rename columns with trial to screen_visit
+  rename_with(~str_replace(., "trial", "screen_visit"), contains("trial")) %>% 
+  # Select specific columns for the final output
+  select(subject, screen_num, num_visit_screen, mean_no_of_fixations_per_screen_visit,
+         mean_duration_of_fixations) %>% 
+  # This column will help differentiate when we combina the fixations stats
+  mutate(data = "subject_screen_visit")
+
+# View output
+#screen_view_stats %>% head(100) %>% view()
+
+# Save screen_view_stats_output as csv file
+write_csv(screen_view_stats,
+          'subject_data/screen_view_stats_output_issue.csv')
+
+```
+
+
+
+
+### Issue 1
+
+For instance subject 54. 
+1. In the screen_stats_data.csv file there are 22 screens for this subject 
+(out of a possible 23)  with screen number 3 being indicated as NA.  
+Upon inspection of the fixations.csv file, the fixations on screen 3 visit 1 
+(trial 3) are not included in fixations.csv file.
+
+2. Screen 2 visit 4 (aka trial screen number 18) is shown in the fixations.csv 
+file as NA - meaning no fixations on the screen, which would mean that this is 
+the missing screen (22 out of 23)
+
+#### Answer
+
+1. In the screen_stats_data, subject 54 has only screen number 1-7. 
+This dataset will not show the number of visits as it was grouped by only 
+subject and screen 
+
+By changing the smooth.saccades to False, this results to getting missing values
+
+We only have the number of visits in the screen_view_stats dataset. This dataset,
+indeed, shows the visit 1 for screen number 3 and is included.
+
+
+2. Even though there is information for screen 2  and visit 4, no saccades were
+detected for this instance. 
+
+
+```{r}
+
+screen_view_stats %>%
+  filter(subject==54) %>% 
+  count(screen_num)
+  
+
+screen_view_stats %>% 
+  filter(subject == 54, screen_num ==3)
+  # filter(subject %in% c(54, 72))
+
+
+# Data for subject 54, screen number 2, visit ==4
+subject_data_fin %>% 
+  filter(subject == 54, screen_num ==2, num_visit_screen ==1)
+
+# Fixations for subject 54, screen number 2, visit ==4
+subject_data_fin %>% 
+  filter(subject == 54, screen_num ==2, num_visit_screen ==4) %>%
+  # group_by(subject, screen_num, num_visit_screen) %>%
+  group_by(subject, screen_num, num_visit_screen) %>%
+  # Nest data for each group
+  nest(data = c(treatment, x, y, time, trial)) %>% 
+  # Calculate statistics for nested data using process_possibly
+  mutate(stats = map(data, ~ fixations_possibly(.x))) %>% 
+  # Pivot and clean the resulting statistics
+  # Unnest the statistics
+  unnest(stats) %>% 
+  # Select relevant columns and remove the nested data column
+  select(-data) %>% 
+  # Ungroup the data
+  ungroup()
+
+
+```
+
+### Issue 2
+
+Then I have a different scenario, looking at subject 72:
+According to the screen_stats_data file subject 72 has 26 screens . According to 
+the fixations file, screen 5 visit 5 (aka trial screen number 26) has no 
+fixations and is indicated as NA
+
+The problem however is, upon further inspection of the fixations file, I find 
+that the fixations for screen 2 visit 3 (aka trial 22) are not listed in the 
+fixations file, but the screen_stats_data file shows the summary statistics 
+for 3 x  screen 2 visits, which is the correct number of visits to screen 2 as 
+per the raw data. Now my question is, how can we have summary statistics for a 
+screen when there are no fixations listed for that screen in the fixations file. 
+The screen_view_stats_output.csv file shows the same summary statistics and 
+confirms that screen 2 visit 3 has summary statistics.
+
+
+### Answer
+
+From our analysis subject 72, screen number 5 and visit 5 shows that no fixations 
+can be obtained from such instance as there are no saccades that can be obtained
+
+Upon investigating further there are possible reasons for not getting any fixations
+
+1. Discontinuity in the data
+2. Poor data
+
+
+Source:
+
+1. https://stackoverflow.com/questions/54997537/problems-in-the-analysis-of-gaze-data-r-package-saccades#:~:text=I%20suspect%20that%20there%20are,parse%20into%20saccades%20and%20fixations.&text=If%20ggplot2%20isn't%20installed,packages('ggplot2')%20first.
+
+
+We expolored the 2 possibilities. There is no discontinuity in the data as shown
+by the following graph. This leaves us with the poor data problem.
+
+For subject 72, screen number 2 and visit 3, fixations can be obtained as below
+
+
+```{r}
+# Data for subject 72, screen number 5, visit ==5
+subject_72_5_5 <- subject_data_fin %>% 
+  filter(subject == 72, screen_num ==5, num_visit_screen ==5) %>% 
+  select(time, x, y, trial)
+
+# Fixations for subject 72, screen number 5, visit ==5
+subject_72_5_5_fix <- subject_data_fin %>% 
+  filter(subject == 72, screen_num ==5, num_visit_screen ==5) %>% 
+  # group_by(subject, screen_num, num_visit_screen) %>%
+  group_by(subject, screen_num, num_visit_screen) %>%
+  # Nest data for each group
+  nest(data = c(treatment, x, y, time, trial)) %>% 
+  # Calculate statistics for nested data using process_possibly
+  mutate(stats = map(data, ~ fixations_possibly(.x))) %>% 
+  # Pivot and clean the resulting statistics
+  # Unnest the statistics
+  unnest(stats) %>% 
+  # Select relevant columns and remove the nested data column
+  select(-data) %>% 
+  # Ungroup the data
+  ungroup()
+
+
+# Fixations 
+subject_72_5_5_fix
+
+
+# Plot to see discontinuities in the data
+ggplot(data = subject_72_5_5,
+       aes(x = time)) + # define time series x axis
+geom_line(aes(y = x, colour = 'X')) +  # plot horizontal data
+geom_line(aes(y = y, colour = 'Y')) + # plot vertical time series too
+scale_color_manual(name = "Coordinates", values = c("X" = "darkblue", 
+                                                 "Y" = "darkred")) +
+labs(x = "Time", y = "X and Y lines",
+     title = "X, Y coordinates by Time") +
+  theme_bw()
+
+# Fixations for subject 72, screen number 5, visit ==5
+subject_data_fin %>% 
+  filter(subject == 72, screen_num ==2, num_visit_screen ==3) %>% 
+  # group_by(subject, screen_num, num_visit_screen) %>%
+  group_by(subject, screen_num, num_visit_screen) %>%
+  # Nest data for each group
+  nest(data = c(treatment, x, y, time, trial)) %>% 
+  # Calculate statistics for nested data using process_possibly
+  mutate(stats = map(data, ~ fixations_possibly(.x))) %>% 
+  # Pivot and clean the resulting statistics
+  # Unnest the statistics
+  unnest(stats) %>% 
+  # Select relevant columns and remove the nested data column
+  select(-data) %>% 
+  # Ungroup the data
+  ungroup()
+  
+  
+```
+
+
+
+Use the following code to get the fixations for all instances:
+
+A total of 428 instances have missing fixations. We can identify 5097 fixations
+for different instances of (subject, screen number and visits)
+
+```{r}
+
+subject_screen_visit_fixations <- subject_data_fin %>%
+  select(-value) %>% 
+  # group_by(subject, screen_num, num_visit_screen) %>%
+  group_by(subject, screen_num, num_visit_screen) %>%
+  # Nest data for each group
+  nest(data = c(treatment, x, y, time, trial)) %>% 
+  # Calculate statistics for nested data using process_possibly
+  mutate(stats = map(data, ~ fixations_possibly(.x))) %>% 
+  # Pivot and clean the resulting statistics
+  # Unnest the statistics
+  unnest(stats) %>% 
+  # Select relevant columns and remove the nested data column
+  select(-data) %>% 
+  # Ungroup the data
+  ungroup()
+
+
+subject_screen_visit_fixations
+
+subject_screen_visit_fixations %>% 
+  filter(!is.na(x)) %>% 
+  group_by(subject, screen_num, num_visit_screen) %>% 
+  count()
+
+subject_screen_visit_fixations %>% 
+  filter(is.na(x)) %>% 
+  group_by(subject, screen_num, num_visit_screen) %>% 
+  count()
+
+write_csv(subject_screen_visit_fixations,
+          "subject_data/subject_screen_visit_fixations.csv")
+
+```
+
